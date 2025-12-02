@@ -2,55 +2,72 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { AttributeCard } from "@/components/AttributeCard";
-import { DocumentViewer } from "@/components/DocumentViewer";
-import { ArrowLeftIcon, SearchIcon, AlertCircleIcon } from "@/components/icons/Icons";
-import { getDocumentById, getAttributesByDocumentId, saveReview } from "@/api";
+import { PDFViewer } from "@/components/PDFViewer";
+import {
+  ArrowLeftIcon,
+  SearchIcon,
+  AlertCircleIcon,
+  DownloadIcon,
+} from "@/components/icons/Icons";
+import {
+  getDocumentById,
+  getAttributesByDocumentId,
+  saveReview,
+  exportAttributes,
+  getPdfUrl,
+} from "@/api";
 import { Document, Attribute } from "@/types";
 import { toast } from "@/hooks/use-toast";
 
 export default function ContractReview() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  
-  const [document, setDocument] = useState<Document | null>(null);
+
+  const [contractDoc, setContractDoc] = useState<Document | null>(null);
   const [attributes, setAttributes] = useState<Attribute[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedAttributeId, setSelectedAttributeId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [correctedValues, setCorrectedValues] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
       if (!id) return;
-      
+
       try {
         const [docData, attrData] = await Promise.all([
           getDocumentById(id),
           getAttributesByDocumentId(id),
         ]);
-        
+
         if (!docData) {
           navigate("/documents");
           return;
         }
-        
-        setDocument(docData);
+
+        setContractDoc(docData);
         setAttributes(attrData);
-        
+
         // Initialize corrected values
         const initialValues: Record<string, string> = {};
         attrData.forEach((attr) => {
           initialValues[attr.id] = attr.correctedValue || "";
         });
         setCorrectedValues(initialValues);
-        
+
         // Select first attribute by default
         if (attrData.length > 0) {
           setSelectedAttributeId(attrData[0].id);
         }
       } catch (error) {
         console.error("Failed to fetch document:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load document. Please try again.",
+          variant: "destructive",
+        });
       } finally {
         setIsLoading(false);
       }
@@ -91,7 +108,7 @@ export default function ContractReview() {
 
   const handleSaveReview = async () => {
     if (!id) return;
-    
+
     setIsSaving(true);
     try {
       const payload = {
@@ -102,7 +119,7 @@ export default function ContractReview() {
         })),
         status: "Reviewed" as const,
       };
-      
+
       await saveReview(id, payload);
       toast({
         title: "Review Saved",
@@ -120,6 +137,42 @@ export default function ContractReview() {
     }
   };
 
+  const handleExportAttributes = async (format: "csv" | "json") => {
+    if (!id) return;
+
+    setIsExporting(true);
+    try {
+      const blob = await exportAttributes(id, format);
+
+      // Download the file
+      const url = URL.createObjectURL(blob);
+      const a = window.document.createElement("a");
+      a.href = url;
+      a.download = `${contractDoc?.title.replace(/\.[^/.]+$/, "")}-attributes.${format}`;
+      window.document.body.appendChild(a);
+      a.click();
+      window.document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Export Complete",
+        description: `Attributes exported as ${format.toUpperCase()}.`,
+      });
+    } catch (error) {
+      console.error("Export failed:", error);
+      toast({
+        title: "Error",
+        description: "Failed to export attributes. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Get PDF URL from storage reference
+  const pdfUrl = contractDoc?.storageRef ? getPdfUrl(contractDoc.storageRef) : undefined;
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -134,14 +187,14 @@ export default function ContractReview() {
     );
   }
 
-  if (!document) {
+  if (!contractDoc) {
     return null;
   }
 
   return (
     <div className="min-h-screen bg-background">
       <Navbar title="Contract Review" />
-      
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Top Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
@@ -158,7 +211,7 @@ export default function ContractReview() {
               AI-powered attribute extraction and validation
             </p>
           </div>
-          
+
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <span>Document ID: {id}</span>
             <span>·</span>
@@ -179,11 +232,43 @@ export default function ContractReview() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left Panel: Attributes */}
           <div className="bg-card rounded-xl card-shadow p-6">
-            <h2 className="text-lg font-semibold text-foreground mb-1">Extracted Attributes</h2>
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-lg font-semibold text-foreground">
+                Extracted Attributes
+              </h2>
+
+              {/* Export dropdown */}
+              <div className="relative group">
+                <button
+                  disabled={isExporting}
+                  className="flex items-center gap-1 px-2 py-1 text-sm text-muted-foreground hover:text-foreground rounded transition-colors disabled:opacity-50"
+                >
+                  <DownloadIcon className="w-4 h-4" />
+                  Export
+                </button>
+
+                <div className="absolute right-0 mt-1 hidden group-hover:block z-10">
+                  <div className="bg-card rounded-lg card-shadow-lg border border-border overflow-hidden">
+                    <button
+                      onClick={() => handleExportAttributes("csv")}
+                      className="w-full px-4 py-2 text-sm text-left hover:bg-muted transition-colors whitespace-nowrap"
+                    >
+                      Export as CSV
+                    </button>
+                    <button
+                      onClick={() => handleExportAttributes("json")}
+                      className="w-full px-4 py-2 text-sm text-left hover:bg-muted transition-colors whitespace-nowrap"
+                    >
+                      Export as JSON
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
             <p className="text-sm text-muted-foreground mb-4">
               Review and correct attributes. Low-confidence values are highlighted.
             </p>
-            
+
             {/* Search */}
             <div className="relative mb-4">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
@@ -195,7 +280,7 @@ export default function ContractReview() {
                 className="input-field pl-10"
               />
             </div>
-            
+
             {/* Attribute List */}
             <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
               {filteredAttributes.map((attr) => (
@@ -211,7 +296,7 @@ export default function ContractReview() {
                 />
               ))}
             </div>
-            
+
             {/* Actions */}
             <div className="flex flex-col sm:flex-row gap-3 mt-6 pt-6 border-t border-border">
               <button onClick={handleAcceptAll} className="btn-secondary flex-1">
@@ -227,11 +312,12 @@ export default function ContractReview() {
             </div>
           </div>
 
-          {/* Right Panel: Document Viewer */}
+          {/* Right Panel: PDF Viewer */}
           <div className="lg:sticky lg:top-8">
-            <DocumentViewer
+            <PDFViewer
+              pdfUrl={pdfUrl}
               selectedAttribute={selectedAttribute}
-              documentTitle={document.title}
+              documentTitle={contractDoc.title}
             />
           </div>
         </div>
