@@ -1,8 +1,8 @@
-# Welcome to your Lovable project
+# Welcome to Contract Digitization Agent Project
 
 ## Project info
 
-**URL**: https://lovable.dev/projects/5a770a4d-7083-45a3-8ffd-97beaf3a8469
+**URL**: https://contract-scan-dash.lovable.app
 
 ## How can I edit this code?
 
